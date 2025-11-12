@@ -1,0 +1,6 @@
+requests~=2.32.5
+python-dotenv
+kubernetes
+pydantic~=2.11.5
+fastapi~=0.101.1
+uvicorn[standard]~=0.24.0

@@ -21,5 +21,5 @@ jobs:
       with:
         load: true
         push: true
-        tags: user/app:latest
+        tags: kaver79/awws-node-termination-notice:latest
 

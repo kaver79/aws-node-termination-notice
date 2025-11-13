@@ -2,10 +2,19 @@ import json
 import os
 import time
 
+
 import requests
 from dotenv import load_dotenv
 from kubernetes import client, config
+from flask import Flask, jsonify
+from multiprocessing import Process, Value
 
+
+app = Flask(__name__)
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify(status="ok"), 200
 
 def get_pods_labels_on_current_node():
     # Load Kubernetes configuration
@@ -80,7 +89,23 @@ def check_termination_notice():
         pass
     return None
 
+def check_loop():
+    while True:
+        termination_notice = check_termination_notice()
+        if termination_notice:
+            print(f"Termination notice received: {termination_notice}")
+            if get_pods_labels_on_current_node() > 0 :
+                print(
+                    f"Application '{app_label_value}' is still running on this node. Exiting without sending termination notice.")
+                send_slack_message(termination_notice)
+                # Implement your graceful shutdown logic here
+                # e.g., stop processing new requests, save state, exit
+                break
+        time.sleep(5) # Poll every 5 seconds
+        print(f"No termination notice yet, continuing to monitor...")
+
 if __name__ == "__main__":
+    print(f'Starting application...')
     load_dotenv()
     print(f"Setting up the application...")
 
@@ -89,19 +114,13 @@ if __name__ == "__main__":
     app_label_value = os.getenv("APP_LABEL_VALUE", "my-app")
     application_name = os.getenv("APPLICATION_NAME", "MyApp")
     print(f"Monitoring application '{app_label_value}' with label '{app_label_name}={app_label_value}' on node '{os.environ.get('MY_NODE_NAME', 'unknown')}'")
+    process = Process(target=check_loop)
+    process.start()
+    app.run(debug=True, host="0.0.0.0", use_reloader=False, port=3000)
+    process.join()
+    print("Exiting application...")
+    exit(0)
 
-    while True:
-        termination_notice = check_termination_notice()
-        if termination_notice and get_pods_labels_on_current_node() > 0 :
-            print(f"Termination notice received: {termination_notice}")
-            print(
-                f"Application '{app_label_value}' is still running on this node. Exiting without sending termination notice.")
-            send_slack_message(termination_notice)
-            # Implement your graceful shutdown logic here
-            # e.g., stop processing new requests, save state, exit
-            break
-        time.sleep(5) # Poll every 5 seconds
-        print(f"No termination notice yet, continuing to monitor...")
 
 
 

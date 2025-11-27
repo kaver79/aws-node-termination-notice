@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import logging
 
 
 import requests
@@ -33,8 +34,8 @@ def get_pods_labels_on_current_node():
     # If not in a pod, you would need to determine the node name differently
     current_node_name = os.environ.get("MY_NODE_NAME")
     if not current_node_name:
-        print("Warning: MY_NODE_NAME environment variable not set. Cannot filter by current node.")
-        print("Please ensure your pod is configured to expose spec.nodeName via Downward API.")
+        logger.warning("Warning: MY_NODE_NAME environment variable not set. Cannot filter by current node.")
+        logger.warning("Please ensure your pod is configured to expose spec.nodeName via Downward API.")
         # Fallback to listing all pods if node name isn't available
         all_pods = v1.list_pod_for_all_namespaces().items
         pods_on_current_node = all_pods # Treat all pods as potentially on current node without filtering
@@ -45,26 +46,46 @@ def get_pods_labels_on_current_node():
         ]
 
     if not pods_on_current_node:
-        print(f"No pods found on node: {current_node_name}")
+        logger.info("No pods found on node: {current_node_name}")
         exit_code = 0
         return exit_code
 
-    print(f"Pods and their labels on node: {current_node_name or 'unknown'}")
+    logger.info("Pods and their labels on node: {current_node_name or 'unknown'}")
     for pod in pods_on_current_node:
-        print(f"  Pod: {pod.metadata.name}, Namespace: {pod.metadata.namespace}")
+        logger.debug("  Pod: {pod.metadata.name}, Namespace: {pod.metadata.namespace}")
         if pod.metadata.labels:
             for key, value in pod.metadata.labels.items():
-                print(f"    Label: {key}={value}")
+                logger.debug("    Label: {key}={value}")
                 if key == app_label_name and value == app_label_value:
-                    print(f"      Found application label: {value}")
+                    logger.debug("      Found application label: {value}")
                     exit_code = 1
         else:
-            print("    No labels found for this pod.")
+            logger.debug("    No labels found for this pod.")
     return exit_code
 
-def send_slack_message(message_text = "Hello from Python!"):
+def send_slack_message(notice):
     payload = {
-        "text": message_text
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*[non-prod] Spot notification:*"
+                }
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*Event:*\n"+notice.id+"\n*Node:*"+notice.detail+"\n*InstanceID:*"+notice.instanceid+"\n*Comments:* "+notice
+                },
+                "accessory": {
+                    "type": "image",
+                    "image_url": "https://api.slack.com/img/blocks/bkb_template_images/approvalsNewDevice.png",
+                    "alt_text": "computer thumbnail"
+                }
+            }
+        ]
     }
 
     headers = {
@@ -74,10 +95,10 @@ def send_slack_message(message_text = "Hello from Python!"):
     response = requests.post(webhook_url, data=json.dumps(payload), headers=headers)
 
     if response.status_code == 200:
-        print("Slack message sent successfully!")
+        logger.info("Slack message sent successfully!")
         return True
     else:
-        print(f"Error sending Slack message: {response.status_code} - {response.text}")
+        logger.error("Error sending Slack message: {response.status_code} - {response.text}")
         return False
 
 def check_termination_notice():
@@ -93,32 +114,41 @@ def check_loop():
     while True:
         termination_notice = check_termination_notice()
         if termination_notice:
-            print(f"Termination notice received: {termination_notice}")
+            logger.info("Termination notice received: {termination_notice}")
             if get_pods_labels_on_current_node() > 0 :
-                print(
-                    f"Application '{app_label_value}' is still running on this node. Exiting without sending termination notice.")
+                logger.info("Application '{app_label_value}' is still running on this node. Exiting without sending termination notice.")
                 send_slack_message(termination_notice)
                 # Implement your graceful shutdown logic here
                 # e.g., stop processing new requests, save state, exit
                 break
         time.sleep(5) # Poll every 5 seconds
-        print(f"No termination notice yet, continuing to monitor...")
+        logger.debug("No termination notice yet, continuing to monitor...")
+
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Get a logger instance
+logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
-    print(f'Starting application...')
+
+
+    logger.info("Starting application...")
     load_dotenv()
-    print(f"Setting up the application...")
+    logger.info("Setting up the application...")
 
     webhook_url = os.getenv("WEBHOOK_URL", "YOUR_SLACK_WEBHOOK_URL")
     app_label_name = os.getenv("APP_LABEL_NAME", "app.kubernetes.io/name")
     app_label_value = os.getenv("APP_LABEL_VALUE", "my-app")
     application_name = os.getenv("APPLICATION_NAME", "MyApp")
-    print(f"Monitoring application '{app_label_value}' with label '{app_label_name}={app_label_value}' on node '{os.environ.get('MY_NODE_NAME', 'unknown')}'")
+
+    logger.info("Monitoring application "+app_label_value+" with label '"+app_label_name+"' on node "+os.environ.get('MY_NODE_NAME', 'unknown')+" for termination notices.")
     process = Process(target=check_loop)
     process.start()
     app.run(debug=True, host="0.0.0.0", use_reloader=False, port=3000)
     process.join()
-    print("Exiting application...")
+    logger.info("Exiting application...")
     exit(0)
 
 

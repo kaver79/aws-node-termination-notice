@@ -61,6 +61,8 @@ spec:
               value: "{{ .Values.APP_LABEL_VALUE }}"
             - name: APPLICATION_NAME
               value: "{{ .Values.APPLICATION_NAME }}"
+            - name: LOG_LEVEL
+              value: "{{ .Values.LOG_LEVEL }}"
             - name: WEBHOOK_URL
               valueFrom:
                 secretKeyRef:
